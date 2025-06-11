@@ -1,82 +1,73 @@
 import os
-import requests
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
-
-# Load environment variables from .env file
-load_dotenv()
+from openai import OpenAI  # <-- Import the OpenAI library
 
 # --- Configuration ---
-# Choose your AI model provider
-AI_PROVIDER = "deepseek" # or "gemini"
-API_KEY = os.getenv("AI_API_KEY")
+load_dotenv()
+API_KEY = os.getenv("DEEPSEEK")
+
+# Check if the API key is loaded
+if not API_KEY:
+    raise ValueError("AI_API_KEY not found. Please set it in your .env file.")
+
+# Initialize the DeepSeek client using the OpenAI SDK structure
+client = OpenAI(api_key=API_KEY, base_url="https://api.deepseek.com")
 
 # --- App Setup ---
 app = FastAPI()
 
-# CORS Middleware: Allows our frontend to talk to our backend
+# CORS Middleware to allow frontend communication
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], # Allow all origins for simplicity in MVP
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 # --- Data Models ---
-# Defines the structure of the data we expect from the frontend
 class StudentAnswer(BaseModel):
     module_id: int
     answer: str
 
-# --- AI Interaction Logic ---
-def get_ai_response(prompt: str):
-    headers = {
-        "Authorization": f"Bearer {API_KEY}",
-        "Content-Type": "application/json",
-    }
-    
-    if AI_PROVIDER == "gemini":
-        # NOTE: This is a simplified example. Check Google's official Gemini API docs for the exact structure.
-        url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=" + API_KEY
-        headers = {"Content-Type": "application/json"} # Gemini uses API key in URL, not bearer token
-        data = {"contents": [{"parts": [{"text": prompt}]}]}
-    elif AI_PROVIDER == "deepseek":
-        url = "https://api.deepseek.com/chat/completions"
-        data = {
-            "model": "deepseek-chat",
-            "messages": [{"role": "user", "content": prompt}]
-        }
-    else:
-        raise ValueError("Invalid AI_PROVIDER configured")
-
+# --- AI Interaction Logic (Refactored) ---
+def get_ai_response(system_prompt: str, user_prompt: str):
+    """
+    Gets a response from the DeepSeek API using a system and user prompt.
+    """
     try:
-        response = requests.post(url, headers=headers, json=data)
-        response.raise_for_status() # Raises an error for bad responses (4xx or 5xx)
-        
-        if AI_PROVIDER == "gemini":
-            # Extract text from Gemini's specific response structure
-            return response.json()['candidates'][0]['content']['parts'][0]['text']
-        elif AI_PROVIDER == "deepseek":
-            return response.json()['choices'][0]['message']['content']
-            
-    except requests.exceptions.RequestException as e:
-        print(f"API Request failed: {e}")
-        return "Sorry, I'm having trouble connecting to my brain right now. Please try again later."
+        response = client.chat.completions.create(
+            model="deepseek-chat",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            stream=False,
+            temperature=0.7, # A little creativity is good for a tutor
+            max_tokens=250,
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        print(f"DeepSeek API call failed: {e}")
+        return "Sorry, I'm having a technical issue at the moment. Please try again."
 
-
-# --- API Endpoints ---
+# --- API Endpoints (Updated to use new AI function) ---
 from curriculum import COURSE_CONTENT
 
 @app.get("/start_lesson")
 def start_lesson():
-    """Returns the very first explanation to kick off the lesson."""
     first_module = COURSE_CONTENT["modules"][0]
-    prompt = f"You are a friendly and encouraging AI tutor. Start the lesson by explaining the following concept to a brand new student in a simple, welcoming way. Here is the concept: '{first_module['explanation']}'"
     
-    ai_explanation = get_ai_response(prompt)
+    # ADD MARKDOWN INSTRUCTION
+    system_prompt = """You are a friendly and encouraging AI programming tutor. Your goal is to explain concepts to a brand new student. 
+    Use simple, welcoming language. 
+    **Format your output using Markdown.** Use backticks for `code` and code blocks for examples."""
+    
+    user_prompt = f"Please start the lesson by explaining this concept: '{first_module['explanation']}'"
+    ai_explanation = get_ai_response(system_prompt, user_prompt)
     return {"module_id": first_module["id"], "message": ai_explanation}
 
 
@@ -89,21 +80,23 @@ def submit_answer(student_answer: StudentAnswer):
     # Find the current module
     current_module = next((m for m in COURSE_CONTENT["modules"] if m["id"] == module_id), None)
     if not current_module:
-        return {"message": "Error: Invalid module ID."}
+        return {"error": "Invalid module ID."}
 
     # --- Generate Feedback ---
-    feedback_prompt = f"""You are a helpful AI programming tutor. A student was asked: '{current_module['question']}'
-    They submitted the following code: `{user_code}`
-    The key components of a correct answer are: {current_module['answer_keywords']}.
+    feedback_system_prompt = """You are a helpful and patient AI programming tutor. Your role is to analyze a student's code and provide constructive feedback.
+    - If the code is correct, praise them enthusiastically.
+    - If the code is incorrect, gently point out the mistake without giving the direct answer.
+    - **Format your entire response using Markdown.** Use backticks for `code` and bold for emphasis.
+    - Keep your feedback concise (2-4 sentences)."""
     
-    Analyze their answer.
-    - If it's correct, praise them enthusiastically.
-    - If it's incorrect, gently point out the mistake without giving the direct answer. Guide them to fix it. For example, if they forgot quotes, say 'That's so close! Remember that text values, or strings, need to be wrapped in something special.'
-    - Keep your feedback concise (2-3 sentences).
+    feedback_user_prompt = f"""The student was asked this question: '{current_module['question']}'
     
-    After giving feedback, if their answer was correct, introduce the next topic.
-    """
-    ai_feedback = get_ai_response(feedback_prompt)
+    They submitted the following code:
+    `{user_code}`
+
+    The key components of a correct answer are: {current_module['answer_keywords']}. Please provide feedback based on their submission."""
+
+    ai_feedback = get_ai_response(feedback_system_prompt, feedback_user_prompt)
 
     # --- Determine the Next Step ---
     next_module_id = module_id + 1
@@ -113,14 +106,25 @@ def submit_answer(student_answer: StudentAnswer):
     
     # If there is a next module, prepare the next explanation and question
     if next_module:
-        next_explanation_prompt = f"You are an AI tutor. Seamlessly transition to the next topic. Explain the following concept simply: '{next_module['explanation']}'"
-        next_explanation = get_ai_response(next_explanation_prompt)
-        
-        response_data.update({
-            "next_module_id": next_module["id"],
-            "next_explanation": next_explanation,
-            "next_question": next_module["question"]
-        })
+        # Check if the student's answer was likely correct before proceeding
+        # A simple heuristic: check if feedback contains positive words.
+        # This is a simple MVP trick; a real system would have better validation.
+        is_correct = any(word in ai_feedback.lower() for word in ["correct", "great", "exactly", "perfect", "well done"])
+
+        if is_correct and next_module.get("explanation"):
+            # ADD MARKDOWN INSTRUCTION
+            next_explanation_system_prompt = """You are an AI tutor. Seamlessly transition to the next topic. 
+            Explain the following concept simply and clearly.
+            **Use Markdown for formatting, especially for code examples.**"""
+            next_explanation_user_prompt = f"Explain this next concept: '{next_module['explanation']}'"
+            next_explanation = get_ai_response(next_explanation_system_prompt, next_explanation_user_prompt)
+        elif not is_correct:
+            # If the answer was wrong, don't move on. Let them try again.
+            response_data.update({
+                "next_module_id": current_module["id"], # Stay on the same module
+                "next_explanation": "Give it another try!",
+                "next_question": current_module["question"]
+            })
     else: # End of course
         response_data["next_module_id"] = None
 
