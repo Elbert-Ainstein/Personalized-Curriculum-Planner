@@ -8,23 +8,26 @@ interface ChatMessageProps {
 }
 
 const ChatMessage: React.FC<ChatMessageProps> = ({ text, sender }) => {
-  const messageClass = sender === 'user' 
-    ? 'bg-blue-500 text-white self-end' 
+  const messageClass = sender === 'user'
+    ? 'bg-blue-500 text-white self-end'
     : 'bg-gray-200 text-gray-800 self-start';
 
   return (
-    <div className={`p-3 rounded-lg max-w-[80%] break-words ${messageClass}`}>
+    <div className={`p-3 rounded-lg max-w-[80%] break-words ${messageClass} prose prose-sm max-w-none`}>
       <ReactMarkdown
-        className="prose prose-sm max-w-none" // prose classes help style markdown
         remarkPlugins={[remarkGfm]}
         components={{
-          // This part customizes how specific markdown elements are rendered.
-          // For example, let's style code blocks.
-          code({ node, inline, className, children, ...props }) {
+          code({ node, inline, className, children, ...props }: {
+            node?: any;
+            inline?: boolean;
+            className?: string;
+            children?: React.ReactNode;
+            [key: string]: any;
+          }) {
             const match = /language-(\w+)/.exec(className || '');
-            return !inline ? (
-              <code 
-                className="block w-full bg-gray-800 text-white p-3 my-2 rounded-md overflow-x-auto" 
+            return match ? (
+              <code
+                className="block w-full bg-gray-800 text-white p-3 my-2 rounded-md overflow-x-auto"
                 {...props}
               >
                 {children}
@@ -35,10 +38,9 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ text, sender }) => {
               </code>
             );
           },
-          // Ensure paragraphs inside the message don't add extra margins
-          p({node, ...props}) {
-            return <p className="mb-0" {...props} />;
-          }
+          p({ node, children, ...props }: { node?: any; children?: React.ReactNode; [key: string]: any }) {
+            return <p className="mb-0" {...props}>{children}</p>;
+          },
         }}
       >
         {text}

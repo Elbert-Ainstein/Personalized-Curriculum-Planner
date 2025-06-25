@@ -1,9 +1,11 @@
 import os
-from fastapi import FastAPI
+from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
 from openai import OpenAI  # <-- Import the OpenAI library
+from typing import Optional, List
+from curriculum import COURSE_CONTENT as PYTHON_COURSE, ALGEBRA1_COURSE_CONTENT
 
 # --- Configuration ---
 load_dotenv()
@@ -57,75 +59,80 @@ def get_ai_response(system_prompt: str, user_prompt: str):
 # --- API Endpoints (Updated to use new AI function) ---
 from curriculum import COURSE_CONTENT
 
-@app.get("/start_lesson")
-def start_lesson():
-    first_module = COURSE_CONTENT["modules"][0]
-    
-    # ADD MARKDOWN INSTRUCTION
-    system_prompt = """You are a friendly and encouraging AI programming tutor. Your goal is to explain concepts to a brand new student. 
-    Use simple, welcoming language. 
-    **Format your output using Markdown.** Use backticks for `code` and code blocks for examples."""
-    
+# Example: Add more courses here
+COURSES = {
+    "python-basics": PYTHON_COURSE,
+    "algebra-1": ALGEBRA1_COURSE_CONTENT,
+    # "js-basics": JS_COURSE_CONTENT, # Add more as needed
+}
+
+@app.get("/courses")
+def list_courses():
+    return [{"id": cid, "title": c["title"]} for cid, c in COURSES.items()]
+
+@app.get("/start_lesson_multi")
+def start_lesson_multi(course_id: str = Query(...)):
+    course = COURSES.get(course_id)
+    if not course:
+        return {"error": "Invalid course ID."}
+    first_module = course["modules"][0]
+    system_prompt = """You are a friendly and encouraging AI programming tutor. Your goal is to explain concepts to a brand new student. \nUse simple, welcoming language. \n**Format your output using Markdown.** Use backticks for `code` and code blocks for examples."""
     user_prompt = f"Please start the lesson by explaining this concept: '{first_module['explanation']}'"
     ai_explanation = get_ai_response(system_prompt, user_prompt)
-    return {"module_id": first_module["id"], "message": ai_explanation}
+    return {
+        "module_id": first_module["id"],
+        "message": ai_explanation,
+        "expects_code": bool(first_module.get("question")),
+        "course_id": course_id,
+        "question": first_module.get("question"),
+    }
 
-
-@app.post("/submit_answer")
-def submit_answer(student_answer: StudentAnswer):
-    """Processes a student's answer, gives feedback, and provides the next step."""
+@app.post("/submit_answer_multi")
+def submit_answer_multi(
+    student_answer: StudentAnswer,
+    course_id: str = Query(...)
+):
+    course = COURSES.get(course_id)
+    if not course:
+        return {"error": "Invalid course ID."}
     module_id = student_answer.module_id
     user_code = student_answer.answer
-
-    # Find the current module
-    current_module = next((m for m in COURSE_CONTENT["modules"] if m["id"] == module_id), None)
+    current_module = next((m for m in course["modules"] if m["id"] == module_id), None)
     if not current_module:
         return {"error": "Invalid module ID."}
-
-    # --- Generate Feedback ---
-    feedback_system_prompt = """You are a helpful and patient AI programming tutor. Your role is to analyze a student's code and provide constructive feedback.
-    - If the code is correct, praise them enthusiastically.
-    - If the code is incorrect, gently point out the mistake without giving the direct answer.
-    - **Format your entire response using Markdown.** Use backticks for `code` and bold for emphasis.
-    - Keep your feedback concise (2-4 sentences)."""
-    
-    feedback_user_prompt = f"""The student was asked this question: '{current_module['question']}'
-    
-    They submitted the following code:
-    `{user_code}`
-
-    The key components of a correct answer are: {current_module['answer_keywords']}. Please provide feedback based on their submission."""
-
+    # Feedback prompt: more guiding and hinting for non-code courses
+    if course_id == "python-basics":
+        feedback_system_prompt = """You are a helpful and patient AI programming tutor. Your role is to analyze a student's code and provide constructive feedback.\n- If the code is correct, praise them enthusiastically.\n- If the code is incorrect, gently point out the mistake without giving the direct answer.\n- **Format your entire response using Markdown.** Use backticks for `code` and bold for emphasis.\n- Keep your feedback concise (2-4 sentences)."""
+        feedback_user_prompt = f"""The student was asked this question: '{current_module['question']}'\n\nThey submitted the following code:\n`{user_code}`\n\nThe key components of a correct answer are: {current_module['answer_keywords']}. Please provide feedback based on their submission."""
+    else:
+        feedback_system_prompt = """You are a helpful and patient AI math tutor. Your role is to analyze a student's answer and provide constructive, guiding feedback.\n- If the answer is correct, praise them and briefly explain why.\n- If the answer is incorrect, do NOT give the answer, but ask a guiding question or give a hint to help them think.\n- Always restate the assignment/question clearly.\n- **Format your response using Markdown.**\n- Keep your feedback concise (2-4 sentences)."""
+        feedback_user_prompt = f"""The student was asked this question: '{current_module['question']}'\n\nThey submitted the following answer:\n`{user_code}`\n\nThe key components of a correct answer are: {current_module['answer_keywords']}. Please provide feedback based on their submission."""
     ai_feedback = get_ai_response(feedback_system_prompt, feedback_user_prompt)
-
-    # --- Determine the Next Step ---
     next_module_id = module_id + 1
-    next_module = next((m for m in COURSE_CONTENT["modules"] if m["id"] == next_module_id), None)
-    
+    next_module = next((m for m in course["modules"] if m["id"] == next_module_id), None)
     response_data = {"feedback": ai_feedback}
-    
-    # If there is a next module, prepare the next explanation and question
     if next_module:
-        # Check if the student's answer was likely correct before proceeding
-        # A simple heuristic: check if feedback contains positive words.
-        # This is a simple MVP trick; a real system would have better validation.
         is_correct = any(word in ai_feedback.lower() for word in ["correct", "great", "exactly", "perfect", "well done"])
-
         if is_correct and next_module.get("explanation"):
-            # ADD MARKDOWN INSTRUCTION
-            next_explanation_system_prompt = """You are an AI tutor. Seamlessly transition to the next topic. 
-            Explain the following concept simply and clearly.
-            **Use Markdown for formatting, especially for code examples.**"""
+            next_explanation_system_prompt = """You are an AI tutor. Seamlessly transition to the next topic. \nExplain the following concept simply and clearly.\n**Use Markdown for formatting, especially for code examples.**"""
             next_explanation_user_prompt = f"Explain this next concept: '{next_module['explanation']}'"
             next_explanation = get_ai_response(next_explanation_system_prompt, next_explanation_user_prompt)
-        elif not is_correct:
-            # If the answer was wrong, don't move on. Let them try again.
             response_data.update({
-                "next_module_id": current_module["id"], # Stay on the same module
-                "next_explanation": "Give it another try!",
-                "next_question": current_module["question"]
+                "next_module_id": next_module["id"],
+                "next_explanation": next_explanation,
+                "next_question": next_module.get("question"),
+                "expects_code": bool(next_module.get("question")),
             })
-    else: # End of course
+        elif not is_correct:
+            response_data.update({
+                "next_module_id": current_module["id"],
+                "next_explanation": "Give it another try!",
+                "next_question": current_module["question"],
+                "expects_code": bool(current_module.get("question")),
+            })
+    else:
         response_data["next_module_id"] = None
-
+        response_data["expects_code"] = False
+    # Always include the assignment/question for clarity
+    response_data["question"] = next_module.get("question") if next_module else None
     return response_data

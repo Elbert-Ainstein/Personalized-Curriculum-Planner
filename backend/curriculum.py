@@ -31,3 +31,37 @@ COURSE_CONTENT = {
         }
     ]
 }
+
+ALGEBRA1_COURSE_CONTENT = {
+    "title": "Algebra 1: Foundations",
+    "modules": [
+        {
+            "id": 1,
+            "title": "What is a Variable?",
+            "explanation": "In Algebra, a variable is a symbol (like x or y) that stands for a number we don't know yet. Variables let us write equations and solve problems.",
+            "question": "What is the variable in the equation `x + 3 = 7`?",
+            "answer_keywords": ["x"]
+        },
+        {
+            "id": 2,
+            "title": "Solving Linear Equations",
+            "explanation": "A linear equation is an equation where the variable is only to the first power (no exponents). To solve `x + 3 = 7`, subtract 3 from both sides to get `x = 4`.",
+            "question": "Solve for x: `x + 5 = 12`.",
+            "answer_keywords": ["x = 7", "7"]
+        },
+        {
+            "id": 3,
+            "title": "Understanding Functions",
+            "explanation": "A function is a rule that takes an input and gives an output. For example, `f(x) = x + 2` means if you put in 3, you get 5 (because 3 + 2 = 5).",
+            "question": "If `f(x) = x + 2`, what is `f(4)`?",
+            "answer_keywords": ["6"]
+        },
+        {
+            "id": 4,
+            "title": "Course Complete!",
+            "explanation": "Great job! You've learned the basics of variables, equations, and functions in Algebra 1.",
+            "question": None,
+            "answer_keywords": []
+        }
+    ]
+}
