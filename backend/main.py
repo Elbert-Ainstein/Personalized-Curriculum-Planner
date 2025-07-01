@@ -1,5 +1,5 @@
 import os
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, Query, Body
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
@@ -87,10 +87,37 @@ def start_lesson_multi(course_id: str = Query(...)):
         "question": first_module.get("question"),
     }
 
+# --- In-memory Progress Store (for demo purposes) ---
+# Structure: {student_id: {course_id: module_id}}
+progress_store = {}
+
+@app.get("/progress")
+def get_progress(student_id: str = Query(...)):
+    """Return the progress for all courses for a student."""
+    return progress_store.get(student_id, {})
+
+@app.get("/dashboard")
+def dashboard(student_id: str = Query(...)):
+    """Return a dashboard summary for the student: all courses, titles, and progress."""
+    student_progress = progress_store.get(student_id, {})
+    dashboard = []
+    for cid, course in COURSES.items():
+        modules = course["modules"]
+        completed = student_progress.get(cid, 0)
+        dashboard.append({
+            "course_id": cid,
+            "title": course["title"],
+            "total_modules": len(modules),
+            "completed_modules": completed,
+            "is_complete": completed >= len(modules)
+        })
+    return dashboard
+
 @app.post("/submit_answer_multi")
 def submit_answer_multi(
     student_answer: StudentAnswer,
-    course_id: str = Query(...)
+    course_id: str = Query(...),
+    student_id: str = Query(...)
 ):
     course = COURSES.get(course_id)
     if not course:
@@ -111,9 +138,16 @@ def submit_answer_multi(
     next_module_id = module_id + 1
     next_module = next((m for m in course["modules"] if m["id"] == next_module_id), None)
     response_data = {"feedback": ai_feedback}
+    # --- Progress Tracking ---
+    # Only update progress if answer is correct and there is a next module
+    is_correct = False
     if next_module:
         is_correct = any(word in ai_feedback.lower() for word in ["correct", "great", "exactly", "perfect", "well done"])
         if is_correct and next_module.get("explanation"):
+            # Update progress
+            if student_id not in progress_store:
+                progress_store[student_id] = {}
+            progress_store[student_id][course_id] = next_module["id"] - 1  # Mark previous as completed
             next_explanation_system_prompt = """You are an AI tutor. Seamlessly transition to the next topic. \nExplain the following concept simply and clearly.\n**Use Markdown for formatting, especially for code examples.**"""
             next_explanation_user_prompt = f"Explain this next concept: '{next_module['explanation']}'"
             next_explanation = get_ai_response(next_explanation_system_prompt, next_explanation_user_prompt)
@@ -131,6 +165,10 @@ def submit_answer_multi(
                 "expects_code": bool(current_module.get("question")),
             })
     else:
+        # If no next module, mark course as complete
+        if student_id not in progress_store:
+            progress_store[student_id] = {}
+        progress_store[student_id][course_id] = len(course["modules"])
         response_data["next_module_id"] = None
         response_data["expects_code"] = False
     # Always include the assignment/question for clarity
