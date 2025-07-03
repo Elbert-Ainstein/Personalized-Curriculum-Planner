@@ -107,9 +107,11 @@ export default function CourseSelectionPage() {
     if (isGuest) {
       localStorage.removeItem("guest");
       setIsGuest(false);
+      setLoading(false); // Ensure loading is false after guest logout
       window.location.reload();
     } else {
       signOut({ callbackUrl: "/" });
+      setLoading(false); // Ensure loading is false after Google logout
     }
   };
 

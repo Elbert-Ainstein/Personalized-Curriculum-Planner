@@ -71,20 +71,32 @@ def list_courses():
     return [{"id": cid, "title": c["title"]} for cid, c in COURSES.items()]
 
 @app.get("/start_lesson_multi")
-def start_lesson_multi(course_id: str = Query(...)):
+def start_lesson_multi(course_id: str = Query(...), student_id: str = Query(...)):
     course = COURSES.get(course_id)
     if not course:
         return {"error": "Invalid course ID."}
-    first_module = course["modules"][0]
+    # Get progress for this student and course
+    completed = progress_store.get(student_id, {}).get(course_id, 0)
+    # If completed >= number of modules, course is done
+    if completed >= len(course["modules"]):
+        return {
+            "module_id": None,
+            "message": "You've already completed this course!",
+            "expects_code": False,
+            "course_id": course_id,
+            "question": None,
+        }
+    # Start from the next incomplete module
+    module = course["modules"][completed]
     system_prompt = """You are a friendly and encouraging AI programming tutor. Your goal is to explain concepts to a brand new student. \nUse simple, welcoming language. \n**Format your output using Markdown.** Use backticks for `code` and code blocks for examples."""
-    user_prompt = f"Please start the lesson by explaining this concept: '{first_module['explanation']}'"
+    user_prompt = f"Please start the lesson by explaining this concept: '{module['explanation']}'"
     ai_explanation = get_ai_response(system_prompt, user_prompt)
     return {
-        "module_id": first_module["id"],
+        "module_id": module["id"],
         "message": ai_explanation,
-        "expects_code": bool(first_module.get("question")),
+        "expects_code": bool(module.get("question")),
         "course_id": course_id,
-        "question": first_module.get("question"),
+        "question": module.get("question"),
     }
 
 # --- In-memory Progress Store (for demo purposes) ---
